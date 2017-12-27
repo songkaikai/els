@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<meta charset="utf-8">
+	<meta http-equiv="X-UA-Compatible" content="IE=edge">
+	<title></title>
+	<link rel="stylesheet" href="">
+	<style type="text/css" media="screen">
+		body {
+		  background: #161818;
+		  margin: 0;
+		  padding: 0;
+		  overflow: hidden;
+		}
+	</style>
+</head>
+<body>
+	<canvas id="canvas"/>
+	<script>
+		//---------- CONSTANTS ----------
+	// configurable
+ 	const WIDTH = window.innerWidth; // integer, canvas width
+	const HEIGHT = window.innerHeight; // integer, canvas height
+	const POINTS = 1200; // integer, amount of seed points
+	const COLORS = 5; // integer, amount of distint colors (end points)
+	const FPS = 60; // integer
+	const INITIAL_SIZE = 1; // float, initial point size
+	const OPACITY = 0.7; // float
+	const MERGE_GROWTH = 2; // float
+	const MAX_SPEED = 5; // integer
+	const WOBBLE = 5;
+	// non configurable
+	const DBL_PI = 2 * Math.PI;
+
+	//---------- UTIL ----------
+	function getRandomNumber(min, max) {
+	  return Math.floor(Math.random() * (max - min) + min);
+	}
+
+	function getRandomColor() {
+	  const r = getRandomNumber(0, 256),
+	    g = getRandomNumber(0, 256),
+	    b = getRandomNumber(0, 256);
+	  return `rgba(${r},${g},${b},${OPACITY})`;
+	}
+
+	//---------- CHUNK ----------
+	class Chunk {
+	  constructor(x, y, color) {
+	    this.x = x;
+	    this.y = y;
+	    this.color = color;
+	    this.size = INITIAL_SIZE;
+	    this.disposed = false;
+	    this.speedX = getRandomNumber(1, MAX_SPEED);
+	    this.speedY = this.speedX / (WIDTH/HEIGHT);
+	    this.merged = 0;
+	  }
+
+	  stepTo(chunk) {
+	    this.x = this.x + getRandomNumber(0,WOBBLE)* (Math.random()>0.5?1:-1);
+	    this.y = this.y + getRandomNumber(0,WOBBLE)*(Math.random()>0.5?1:-1);
+	    if (this.x > chunk.x) this.x -= this.speedX;
+	    else if (this.x < chunk.x) this.x += this.speedX;
+	    if (Math.abs(this.x - chunk.x) <= this.speedX) this.x = chunk.x;
+
+	    if (this.y > chunk.y) this.y -= this.speedY;
+	    else if (this.y < chunk.y) this.y += this.speedY;
+	    if (Math.abs(this.y - chunk.y) <= this.speedY) this.y = chunk.y;
+	    this.checkBounds();
+	  }
+	  
+	  checkBounds(){
+	    if(this.x < 0) this.x = 0;
+	    if(this.x > WIDTH) this.x = WIDTH;
+	    if(this.y < 0) this.y = 0;
+	    if(this.y > HEIGHT) this.y = HEIGHT;
+	  }
+
+	  tryMergeWith(chunk) {
+	    if (this.x !== chunk.x || this.y !== chunk.y) return false;
+	    this.size = Math.max(this.size, chunk.size) + MERGE_GROWTH;
+	    chunk.dispose();
+	    this.merged += 2;
+	    return true;
+	  }
+
+	  isSameColorAs(chunk) {
+	    return this.color === chunk.color;
+	  }
+
+	  distanceTo(chunk) {
+	    const a = this.x - chunk.x;
+	    const b = this.y - chunk.y;
+
+	    return Math.sqrt(a * a + b * b);
+	  }
+
+	  draw(ctx) {
+	    if (this.disposed) return;
+	    ctx.beginPath();
+	    const oldFillStyle = ctx.fillStyle;
+	    ctx.fillStyle = this.merged ? "white" : this.color;
+	    ctx.arc(this.x, this.y, this.size, 0, DBL_PI);
+	    ctx.fill();
+	    ctx.fillStyle = oldFillStyle;
+	    if (this.merged) this.merged--;
+	  }
+
+	  dispose() {
+	    this.disposed = true;
+	  }
+	}
+
+	//---------- PANE ----------
+	class Pane {
+	  constructor(ctx) {
+	    this.ctx = ctx;
+	    this.chunks = [];
+	  }
+
+	  reset(count) {
+	    const colors = [];
+	    for (let c = 0; c < COLORS; c++) {
+	      colors.push(getRandomColor());
+	    }
+	    this.chunks = [];
+	    for (let i = 0; i < count; i++) {
+	      const chunk = new Chunk(
+	        getRandomNumber(1, WIDTH),
+	        getRandomNumber(1, HEIGHT),
+	        colors[getRandomNumber(0, colors.length)]
+	      );
+	      this.chunks.push(chunk);
+	    }
+	  }
+
+	  draw() {
+	    for (let i = 0; i < this.chunks.length; i++) {
+	      this.chunks[i].draw(this.ctx);
+	    }
+	  }
+
+	  step() {
+	    for (const chunk of this.chunks) {
+	      if (chunk.disposed) continue;
+	      const closest = this.findClosestSameColor(chunk);
+	      if (!closest) continue;
+	      chunk.stepTo(closest);
+	      chunk.tryMergeWith(closest);
+	    }
+	    //this.chunks = this.chunks.filter(this.isNotDisposed);
+	  }
+
+	  findClosestSameColor(chunk) {
+	    let closest = null,
+	      dist;
+	    for (let i = 0; i < this.chunks.length; i++) {
+	      const another = this.chunks[i];
+	      if (
+	        chunk === another ||
+	        another.disposed ||
+	        !chunk.isSameColorAs(another)
+	      )
+	        continue;
+	      const newDist = chunk.distanceTo(another);
+	      if (!closest || newDist < dist) {
+	        closest = another;
+	        dist = newDist;
+	      }
+	    }
+	    return closest === null ? null : closest;
+	  }
+
+	  isNotDisposed(chunk) {
+	    return !chunk.disposed;
+	  }
+	}
+
+	//---------- INDEX ----------
+	const canvas = document.getElementById("canvas");
+	canvas.width = WIDTH.toString();
+	canvas.height = HEIGHT.toString();
+	const ctx = canvas.getContext("2d");
+
+	const pane = new Pane(ctx);
+	pane.reset(POINTS);
+
+	let now;
+	let then = Date.now();
+	let interval = 1000 / FPS;
+	let delta;
+	//----------------------
+	function drawLoop() {
+	  requestAnimationFrame(drawLoop);
+
+	  now = Date.now();
+	  delta = now - then;
+
+	  if (delta > interval) {
+	    drawFrame();
+	    then = now - delta % interval;
+	  }
+	}
+
+	function drawFrame() {
+	  ctx.clearRect(0, 0, WIDTH, HEIGHT);
+	  pane.step();
+	  pane.draw();
+	}
+
+	drawLoop();
+
+	document.onclick = () => pane.reset(POINTS);
+
+	</script>
+</body>
+</html>
